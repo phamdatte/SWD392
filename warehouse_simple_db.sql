@@ -1,7 +1,7 @@
 -- =====================================================
 -- Warehouse Management System - SIMPLIFIED VERSION
 -- Chỉ tập trung: NHẬP KHO & XUẤT KHO
--- User/Role/Permission gộp vào config table
+-- Role-Based Page Access Control
 -- =====================================================
 
 -- Drop tables if exist
@@ -15,10 +15,13 @@ DROP TABLE IF EXISTS product;
 DROP TABLE IF EXISTS product_category;
 DROP TABLE IF EXISTS vendor;
 DROP TABLE IF EXISTS user;
+DROP TABLE IF EXISTS role_page;
+DROP TABLE IF EXISTS page;
+DROP TABLE IF EXISTS role;
 DROP TABLE IF EXISTS config;
 
 -- =====================================================
--- 1. CONFIG TABLE (thay thế role/permission tables)
+-- 1. CONFIG TABLE (system settings)
 -- =====================================================
 
 CREATE TABLE config (
@@ -31,7 +34,53 @@ CREATE TABLE config (
 );
 
 -- =====================================================
--- 2. USER (đơn giản hóa)
+-- 2. ROLE TABLE (Vai trò)
+-- =====================================================
+
+CREATE TABLE role (
+    role_id INT PRIMARY KEY AUTO_INCREMENT,
+    role_name VARCHAR(50) NOT NULL UNIQUE,
+    description VARCHAR(255),
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- 3. PAGE TABLE (Các trang trong hệ thống)
+-- =====================================================
+
+CREATE TABLE page (
+    page_id INT PRIMARY KEY AUTO_INCREMENT,
+    page_code VARCHAR(50) NOT NULL UNIQUE,      -- VD: 'receipt_list', 'issue_create'
+    page_name VARCHAR(100) NOT NULL,             -- Tên hiển thị
+    page_url VARCHAR(200),                       -- URL/Route của page
+    page_group VARCHAR(50),                      -- Nhóm: 'receipt', 'issue', 'inventory', 'admin'
+    icon VARCHAR(50),                            -- Icon class (optional)
+    display_order INT DEFAULT 0,                 -- Thứ tự hiển thị trong menu
+    is_menu BOOLEAN DEFAULT TRUE,                -- Có hiển thị trong menu không
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- =====================================================
+-- 4. ROLE_PAGE TABLE (Phân quyền Role - Page)
+-- =====================================================
+
+CREATE TABLE role_page (
+    role_id INT NOT NULL,
+    page_id INT NOT NULL,
+    can_view BOOLEAN DEFAULT TRUE,               -- Quyền xem
+    can_create BOOLEAN DEFAULT FALSE,            -- Quyền tạo mới
+    can_edit BOOLEAN DEFAULT FALSE,              -- Quyền sửa
+    can_delete BOOLEAN DEFAULT FALSE,            -- Quyền xóa
+    can_approve BOOLEEN DEFAULT FALSE,           -- Quyền duyệt
+    PRIMARY KEY (role_id, page_id),
+    FOREIGN KEY (role_id) REFERENCES role(role_id),
+    FOREIGN KEY (page_id) REFERENCES page(page_id)
+);
+
+-- =====================================================
+-- 5. USER TABLE
 -- =====================================================
 
 CREATE TABLE user (
@@ -39,16 +88,17 @@ CREATE TABLE user (
     username VARCHAR(50) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     full_name VARCHAR(100) NOT NULL,
-    role VARCHAR(20) NOT NULL,  -- Admin, Manager, Staff
+    role_id INT NOT NULL,                        -- FK to role table
     email VARCHAR(100),
     phone VARCHAR(20),
     is_active BOOLEAN DEFAULT TRUE,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    FOREIGN KEY (role_id) REFERENCES role(role_id)
 );
 
 -- =====================================================
--- 3. VENDOR (Nhà cung cấp)
+-- 6. VENDOR (Nhà cung cấp)
 -- =====================================================
 
 CREATE TABLE vendor (
@@ -191,20 +241,108 @@ CREATE TABLE inventory_transaction (
 -- INSERT DEFAULT DATA
 -- =====================================================
 
--- Config: Roles & Permissions (JSON format)
+-- System Config
 INSERT INTO config (config_key, config_value, description) VALUES
-('roles', '["Admin","Manager","Staff"]', 'Available user roles'),
-('permissions_admin', '["all"]', 'Admin has full access'),
-('permissions_manager', '["receipt.approve","issue.approve","inventory.view","report.view"]', 'Manager permissions'),
-('permissions_staff', '["receipt.create","issue.create","inventory.view"]', 'Staff permissions'),
 ('system_name', 'Warehouse Management System', 'System name'),
 ('currency', 'VND', 'Default currency');
 
--- Default users (password: 123456)
-INSERT INTO user (username, password_hash, full_name, role, email) VALUES
-('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mrq4p8WY9y/FMxFZJ.g8RmlFCCHIB.a', 'Administrator', 'Admin', 'admin@warehouse.com'),
-('manager', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mrq4p8WY9y/FMxFZJ.g8RmlFCCHIB.a', 'Warehouse Manager', 'Manager', 'manager@warehouse.com'),
-('staff', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mrq4p8WY9y/FMxFZJ.g8RmlFCCHIB.a', 'Warehouse Staff', 'Staff', 'staff@warehouse.com');
+-- =====================================================
+-- ROLES
+-- =====================================================
+INSERT INTO role (role_name, description) VALUES
+('Admin', 'Quản trị viên - Toàn quyền'),
+('Manager', 'Quản lý kho - Duyệt phiếu, xem báo cáo'),
+('Staff', 'Nhân viên kho - Tạo phiếu nhập/xuất');
+
+-- =====================================================
+-- PAGES (Danh sách các trang trong hệ thống)
+-- =====================================================
+INSERT INTO page (page_code, page_name, page_url, page_group, icon, display_order, is_menu) VALUES
+-- Dashboard
+('dashboard', 'Dashboard', '/dashboard', 'dashboard', 'fa-home', 1, TRUE),
+
+-- Nhập kho (Receipt)
+('receipt_list', 'Danh sách phiếu nhập', '/receipt', 'receipt', 'fa-inbox', 10, TRUE),
+('receipt_create', 'Tạo phiếu nhập', '/receipt/create', 'receipt', 'fa-plus', 11, TRUE),
+('receipt_detail', 'Chi tiết phiếu nhập', '/receipt/:id', 'receipt', NULL, 12, FALSE),
+('receipt_approve', 'Duyệt phiếu nhập', '/receipt/approve', 'receipt', 'fa-check', 13, TRUE),
+
+-- Xuất kho (Issue)
+('issue_list', 'Danh sách phiếu xuất', '/issue', 'issue', 'fa-share', 20, TRUE),
+('issue_create', 'Tạo phiếu xuất', '/issue/create', 'issue', 'fa-plus', 21, TRUE),
+('issue_detail', 'Chi tiết phiếu xuất', '/issue/:id', 'issue', NULL, 22, FALSE),
+('issue_approve', 'Duyệt phiếu xuất', '/issue/approve', 'issue', 'fa-check', 23, TRUE),
+
+-- Tồn kho (Inventory)
+('inventory_list', 'Tồn kho', '/inventory', 'inventory', 'fa-boxes', 30, TRUE),
+('inventory_history', 'Lịch sử giao dịch', '/inventory/history', 'inventory', 'fa-history', 31, TRUE),
+
+-- Báo cáo (Reports)
+('report_receipt', 'Báo cáo nhập kho', '/report/receipt', 'report', 'fa-chart-bar', 40, TRUE),
+('report_issue', 'Báo cáo xuất kho', '/report/issue', 'report', 'fa-chart-line', 41, TRUE),
+('report_inventory', 'Báo cáo tồn kho', '/report/inventory', 'report', 'fa-chart-pie', 42, TRUE),
+
+-- Master Data
+('product_list', 'Quản lý sản phẩm', '/product', 'master', 'fa-box', 50, TRUE),
+('category_list', 'Quản lý danh mục', '/category', 'master', 'fa-tags', 51, TRUE),
+('vendor_list', 'Quản lý nhà cung cấp', '/vendor', 'master', 'fa-truck', 52, TRUE),
+
+-- Admin
+('user_list', 'Quản lý người dùng', '/admin/user', 'admin', 'fa-users', 60, TRUE),
+('role_list', 'Quản lý vai trò', '/admin/role', 'admin', 'fa-user-shield', 61, TRUE),
+('page_permission', 'Phân quyền trang', '/admin/page-permission', 'admin', 'fa-lock', 62, TRUE);
+
+-- =====================================================
+-- ROLE_PAGE (Phân quyền truy cập trang theo Role)
+-- =====================================================
+
+-- Admin: Full access tất cả pages
+INSERT INTO role_page (role_id, page_id, can_view, can_create, can_edit, can_delete, can_approve)
+SELECT 1, page_id, TRUE, TRUE, TRUE, TRUE, TRUE FROM page;
+
+-- Manager: Có thể duyệt, xem báo cáo, xem tồn kho
+INSERT INTO role_page (role_id, page_id, can_view, can_create, can_edit, can_delete, can_approve) VALUES
+-- Dashboard
+(2, 1, TRUE, FALSE, FALSE, FALSE, FALSE),
+-- Receipt
+(2, 2, TRUE, FALSE, FALSE, FALSE, FALSE),   -- receipt_list: view only
+(2, 4, TRUE, FALSE, FALSE, FALSE, FALSE),   -- receipt_detail: view only  
+(2, 5, TRUE, FALSE, FALSE, FALSE, TRUE),    -- receipt_approve: view + approve
+-- Issue
+(2, 6, TRUE, FALSE, FALSE, FALSE, FALSE),   -- issue_list: view only
+(2, 8, TRUE, FALSE, FALSE, FALSE, FALSE),   -- issue_detail: view only
+(2, 9, TRUE, FALSE, FALSE, FALSE, TRUE),    -- issue_approve: view + approve
+-- Inventory
+(2, 10, TRUE, FALSE, FALSE, FALSE, FALSE),  -- inventory_list: view
+(2, 11, TRUE, FALSE, FALSE, FALSE, FALSE),  -- inventory_history: view
+-- Reports
+(2, 12, TRUE, FALSE, FALSE, FALSE, FALSE),  -- report_receipt: view
+(2, 13, TRUE, FALSE, FALSE, FALSE, FALSE),  -- report_issue: view
+(2, 14, TRUE, FALSE, FALSE, FALSE, FALSE);  -- report_inventory: view
+
+-- Staff: Tạo phiếu nhập/xuất, xem tồn kho
+INSERT INTO role_page (role_id, page_id, can_view, can_create, can_edit, can_delete, can_approve) VALUES
+-- Dashboard
+(3, 1, TRUE, FALSE, FALSE, FALSE, FALSE),
+-- Receipt
+(3, 2, TRUE, FALSE, FALSE, FALSE, FALSE),   -- receipt_list: view
+(3, 3, TRUE, TRUE, TRUE, FALSE, FALSE),     -- receipt_create: view + create + edit
+(3, 4, TRUE, FALSE, TRUE, FALSE, FALSE),    -- receipt_detail: view + edit (own)
+-- Issue
+(3, 6, TRUE, FALSE, FALSE, FALSE, FALSE),   -- issue_list: view
+(3, 7, TRUE, TRUE, TRUE, FALSE, FALSE),     -- issue_create: view + create + edit
+(3, 8, TRUE, FALSE, TRUE, FALSE, FALSE),    -- issue_detail: view + edit (own)
+-- Inventory
+(3, 10, TRUE, FALSE, FALSE, FALSE, FALSE),  -- inventory_list: view only
+(3, 11, TRUE, FALSE, FALSE, FALSE, FALSE);  -- inventory_history: view only
+
+-- =====================================================
+-- DEFAULT USERS (password: 123456)
+-- =====================================================
+INSERT INTO user (username, password_hash, full_name, role_id, email) VALUES
+('admin', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mrq4p8WY9y/FMxFZJ.g8RmlFCCHIB.a', 'Administrator', 1, 'admin@warehouse.com'),
+('manager', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mrq4p8WY9y/FMxFZJ.g8RmlFCCHIB.a', 'Warehouse Manager', 2, 'manager@warehouse.com'),
+('staff', '$2a$10$N9qo8uLOickgx2ZMRZoMy.Mrq4p8WY9y/FMxFZJ.g8RmlFCCHIB.a', 'Warehouse Staff', 3, 'staff@warehouse.com');
 
 -- Sample categories
 INSERT INTO product_category (category_name, description) VALUES
@@ -263,6 +401,35 @@ FROM product p
 LEFT JOIN product_category c ON p.category_id = c.category_id
 LEFT JOIN inventory i ON p.product_id = i.product_id
 WHERE p.is_active = TRUE;
+
+-- View: User Menu - Lấy danh sách pages mà user có quyền truy cập
+CREATE VIEW v_user_menu AS
+SELECT 
+    u.user_id,
+    u.username,
+    r.role_name,
+    p.page_id,
+    p.page_code,
+    p.page_name,
+    p.page_url,
+    p.page_group,
+    p.icon,
+    p.display_order,
+    p.is_menu,
+    rp.can_view,
+    rp.can_create,
+    rp.can_edit,
+    rp.can_delete,
+    rp.can_approve
+FROM user u
+JOIN role r ON u.role_id = r.role_id
+JOIN role_page rp ON r.role_id = rp.role_id
+JOIN page p ON rp.page_id = p.page_id
+WHERE u.is_active = TRUE 
+  AND r.is_active = TRUE 
+  AND p.is_active = TRUE
+  AND rp.can_view = TRUE
+ORDER BY p.display_order;
 
 -- View: Receipt Summary
 CREATE VIEW v_receipt_summary AS
